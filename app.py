@@ -1,46 +1,78 @@
 import gradio as gr
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch
+import os
+import requests, uuid, json
 
-tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
-model = AutoModelForCausalLM.from_pretrained("microsoft/DialoGPT-medium")
+endpoint = "https://api.cognitive.microsofttranslator.com"
+LANGS = ["中文[简体]", "英语", "日语"]
+key = os.environ["AZ_TRANSLATION_KEY"]
+location = os.environ["AZ_TRANSLATION_REGION"]
+path = "/translate"
+constructed_url = endpoint + path
+
+LAN_CODE_MAP = {"中文[简体]": "zh-Hans", "英语": "en", "日语": "ja"}
 
 
-def user(message, history):
-    return "", history + [[message, None]]
-
-
-def bot(history):
-    user_message = history[-1][0]
-    new_user_input_ids = tokenizer.encode(
-        user_message + tokenizer.eos_token, return_tensors="pt"
-    )
-
-    # append the new user input tokens to the chat history
-    bot_input_ids = torch.cat([torch.LongTensor([]), new_user_input_ids], dim=-1)
-
-    # generate a response
-    response = model.generate(
-        bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id
-    ).tolist()
-
-    # convert the tokens to text, and then split the responses into lines
-    response = tokenizer.decode(response[0]).split("<|endoftext|>")
-    response = [
-        (response[i], response[i + 1]) for i in range(0, len(response) - 1, 2)
-    ]  # convert to tuples of list
-    history[-1] = response[0]
-    return history
+def translate(text, src_lang, tgt_lang):
+    """
+    Translate the text from source lang to target lang
+    """
+    params = {
+        "api-version": "3.0",
+        "from": f"{LAN_CODE_MAP[src_lang]}",
+        "to": [f"{LAN_CODE_MAP[tgt_lang]}"],
+    }
+    headers = {
+        "Ocp-Apim-Subscription-Key": key,
+        # location required if you're using a multi-service or regional (not global) resource.
+        "Ocp-Apim-Subscription-Region": location,
+        "Content-type": "application/json",
+        "X-ClientTraceId": str(uuid.uuid4()),
+    }
+    body = [{"text": text}]
+    request = requests.post(constructed_url, params=params, headers=headers, json=body)
+    response = request.json()
+    # result = json.dumps(
+    #     response, sort_keys=True, ensure_ascii=False, indent=4, separators=(",", ": ")
+    # )
+    return response[0]["translations"][0]["text"]
 
 
 with gr.Blocks() as demo:
-    chatbot = gr.Chatbot()
-    msg = gr.Textbox()
-    clear = gr.Button("Clear")
+    gr.Markdown("# 将文本翻译为另一种语言")
+    # gr.Markdown("""![logo](./images/translator.png =200x100 "Company Logo")""")
+    gr.Markdown("+ 选择输入文本语言")
+    gr.Markdown("+ 选择翻译目标语言")
+    gr.Markdown("+ 输入要翻译的文本")
+    gr.Markdown("+ 点击<翻译>按钮查看结果")
+    with gr.Row():
+        src_lan = gr.Dropdown(
+            label="src", show_label=False, choices=LANGS, type="value"
+        )
+        tgt_lan = gr.Dropdown(
+            label="tgt", show_label=False, choices=LANGS, type="value"
+        )
 
-    msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
-        bot, chatbot, chatbot
+    with gr.Row():
+        txt_src = gr.Textbox(label="输入文本")
+        txt_tgt = gr.Textbox(label="翻译结果")
+
+    with gr.Row():
+        btn = gr.Button("翻译").style(full_width=False)
+        btn.click(translate, inputs=[txt_src, src_lan, tgt_lan], outputs=[txt_tgt])
+
+    gr.Markdown("## 参考案例")
+    gr.Markdown("点击以下案例观察结果")
+    gr.Examples(
+        [
+            ["禁用功能时，也会显示文本框。", "中文[简体]", "日语"],
+            ["The text box will also appear when you disable a feature.", "英语", "日语"],
+            ["このテキスト ボックスは、機能を無効にしたときにも表示されます。", "日语", "英语"],
+        ],
+        [txt_src, src_lan, tgt_lan],
+        txt_tgt,
+        translate,
+        # cache_examples=True,
+        run_on_click=True,
     )
-    clear.click(lambda: None, None, chatbot, queue=False)
 
 demo.launch()

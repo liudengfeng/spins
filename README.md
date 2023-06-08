@@ -8,7 +8,3 @@ sdk_version: 3.33.1
 Speaking instructor
 
 ## 环境
-### config
-```bash
-pip f
-```
